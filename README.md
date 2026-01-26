@@ -195,7 +195,6 @@ Planned improvements:
 
 * weighted engagement scores
 * comment caching
-* regex-based keyword matching
 * progress indicators
 * GUI? QnA style formatting for searching instead?
 
