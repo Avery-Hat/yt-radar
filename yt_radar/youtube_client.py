@@ -122,7 +122,7 @@ class YouTubeClient:
                 maxResults=batch,
                 pageToken=page_token,
                 textFormat="plainText",
-                order="relevance",  # or "time" later
+                order="relevance",  # maybe time in the futre
             )
 
             try:

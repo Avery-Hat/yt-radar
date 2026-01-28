@@ -80,6 +80,8 @@ class YTRadarApp(tk.Tk):
         self._videos: list[Video] = []
         self._comment_results: list[CommentTermsResult] = []
         self._combined_results: list[CommentTermsResult] = []
+        self._analysis_by_video_id: dict[str, CommentTermsResult] = {} #adding comments into json data
+
 
         self._build_ui()
         self.after(100, self._poll_queue)
@@ -94,7 +96,6 @@ class YTRadarApp(tk.Tk):
         self.params = UnifiedParamsFrame(
             self,
             on_run_search=self._run_search_only,
-            on_run_comment_terms=self._run_comment_terms_only,
             on_run_combined=self._run_combined,
             on_export=self._export_search_json,
         )
@@ -168,8 +169,15 @@ class YTRadarApp(tk.Tk):
                         videos, results = data
                         self._videos = videos
                         self._combined_results = results
+
+                        # NEW: index comment analysis by video_id
+                        self._analysis_by_video_id = {
+                            r.video.video_id: r for r in results
+                        }
+
                         self._render_comment_results_as_stable(self._combined_results)
-                        self._set_status("Combined complete.")
+                        self._set_status("Analysis complete.")
+
 
                 else:
                     self._set_status("Error.")
@@ -247,7 +255,7 @@ class YTRadarApp(tk.Tk):
             except Exception as e:
                 self._q.put(("err", "combined", str(e)))
 
-        self._set_status("Running combined...")
+        self._set_status("Running analysis...")
         threading.Thread(target=worker, daemon=True).start()
 
 
@@ -372,7 +380,7 @@ class YTRadarApp(tk.Tk):
     # -----------------------------
     def _export_search_json(self) -> None:
         if not self._videos:
-            messagebox.showinfo("No Results", "Run a search first.")
+            messagebox.showinfo("No Results", "Run a search or analysis first.")
             return
 
         path = filedialog.asksaveasfilename(
@@ -383,8 +391,10 @@ class YTRadarApp(tk.Tk):
         if not path:
             return
 
-        payload = [
-            {
+        payload = []
+
+        for v in self._videos:
+            item = {
                 "video_id": v.video_id,
                 "title": v.title,
                 "channel_title": v.channel_title,
@@ -393,13 +403,23 @@ class YTRadarApp(tk.Tk):
                 "comment_count": v.comment_count,
                 "url": v.url,
             }
-            for v in self._videos
-        ]
+
+            # Attach comment analysis if available
+            r = self._analysis_by_video_id.get(v.video_id)
+            if r:
+                item["comment_analysis"] = {
+                    "term_hits": r.total_term_hits,
+                    "matched_comments": r.matched_comments,
+                    "samples": r.samples,
+                }
+
+            payload.append(item)
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
 
-        messagebox.showinfo("Saved", f"Saved {len(self._videos)} results to:\n{path}")
+        messagebox.showinfo("Saved", f"Saved {len(payload)} results to:\n{path}")
+
 
 
 class UnifiedParamsFrame(ttk.LabelFrame):
@@ -409,10 +429,9 @@ class UnifiedParamsFrame(ttk.LabelFrame):
     - Comment terms params (terms/match/top_videos/comments_per_video)
     """
 
-    def __init__(self, parent, on_run_search, on_run_comment_terms, on_run_combined, on_export) -> None:
+    def __init__(self, parent, on_run_search, on_run_combined, on_export) -> None:
         super().__init__(parent, text="Query Parameters")
         self._on_run_search = on_run_search
-        self._on_run_comment_terms = on_run_comment_terms
         self._on_run_combined = on_run_combined
         self._on_export = on_export
 
@@ -499,13 +518,10 @@ class UnifiedParamsFrame(ttk.LabelFrame):
         )
 
         # Row 5 - Buttons
-        ttk.Button(self, text="Run Search Only", command=self._run_search).grid(
+        ttk.Button(self, text="Run Query Only", command=self._run_search).grid(
             row=5, column=7, sticky="e", padx=6, pady=6
         )
-        ttk.Button(self, text="Run Comment Terms Only", command=self._run_comment_terms).grid(
-            row=5, column=8, sticky="e", padx=6, pady=6
-        )
-        ttk.Button(self, text="Run Combined", command=self._run_combined).grid(
+        ttk.Button(self, text="Run Full Analysis", command=self._run_combined).grid(
             row=5, column=9, sticky="e", padx=6, pady=6
         )
         ttk.Button(self, text="Export JSON", command=self._on_export).grid(
@@ -560,14 +576,6 @@ class UnifiedParamsFrame(ttk.LabelFrame):
             return
         params = self.collect_params()
         self._on_run_search(params)
-
-    def _run_comment_terms(self) -> None:
-        if not self._base_validate():
-            return
-        if not self._terms_validate():
-            return
-        params = self.collect_params()
-        self._on_run_comment_terms(params)
 
     def _run_combined(self) -> None:
         if not self._base_validate():
