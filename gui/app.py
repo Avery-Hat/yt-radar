@@ -20,6 +20,12 @@ from yt_radar.services.comment_terms_service import CommentTermsService, Comment
 from yt_radar.services.term_matcher import TermMatcher, TermQuery
 from yt_radar.youtube_client import YouTubeClient
 
+# adding imports for png mouse over functionality, line 269
+import io
+import re
+import urllib.request
+from PIL import Image, ImageTk
+
 
 def run_gui() -> None:
     app = YTRadarApp()
@@ -42,6 +48,134 @@ def decode_unicode_escapes(s: str) -> str:
         return s.encode("utf-8").decode("unicode_escape")
     except Exception:
         return s
+
+class ThumbnailHover:
+    """
+    Hover tooltip that shows a YouTube thumbnail for the row under the mouse.
+    Caches thumbnails by video_id to avoid re-downloading.
+    """
+
+    _YOUTUBE_ID_RE = re.compile(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})")
+
+    def __init__(self, root: tk.Tk, tree: ttk.Treeview, get_video_id_from_row) -> None:
+        self.root = root
+        self.tree = tree
+        self.get_video_id_from_row = get_video_id_from_row
+
+        self._tip: tk.Toplevel | None = None
+        self._label: tk.Label | None = None
+
+        self._current_row: str | None = None
+        self._after_id: str | None = None
+
+        self._cache: dict[str, ImageTk.PhotoImage] = {}
+        self._pending: set[str] = set()
+
+        self.tree.bind("<Motion>", self._on_motion, add=True)
+        self.tree.bind("<Leave>", self._on_leave, add=True)
+        self.tree.bind("<ButtonPress>", self._on_leave, add=True)  # hide on click/selection
+
+    def _on_motion(self, event) -> None:
+        row = self.tree.identify_row(event.y)
+
+        # If we moved to a new row, schedule showing a tooltip after a short delay
+        if row != self._current_row:
+            self._current_row = row
+            self._cancel_scheduled()
+
+            self._hide_tip()
+
+            if row:
+                # show after 350ms so it doesn't flash while moving
+                self._after_id = self.root.after(350, lambda: self._show_for_row(row, event))
+
+    def _on_leave(self, _event=None) -> None:
+        self._current_row = None
+        self._cancel_scheduled()
+        self._hide_tip()
+
+    def _cancel_scheduled(self) -> None:
+        if self._after_id is not None:
+            try:
+                self.root.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+
+    def _show_for_row(self, row: str, event) -> None:
+        vid = self.get_video_id_from_row(row)
+        if not vid:
+            return
+
+        # Create tooltip window
+        if self._tip is None or not self._tip.winfo_exists():
+            self._tip = tk.Toplevel(self.root)
+            self._tip.wm_overrideredirect(True)
+            self._tip.attributes("-topmost", True)
+
+            self._label = tk.Label(self._tip, text="Loading…", relief="solid", borderwidth=1)
+            self._label.pack()
+
+        # Position near cursor
+        x = self.root.winfo_pointerx() + 15
+        y = self.root.winfo_pointery() + 15
+        self._tip.geometry(f"+{x}+{y}")
+
+        # If cached, show immediately
+        if vid in self._cache:
+            self._label.configure(image=self._cache[vid], text="")
+            self._label.image = self._cache[vid]
+            return
+
+        # Otherwise download in background (but don't duplicate work)
+        if vid in self._pending:
+            return
+
+        self._pending.add(vid)
+        self._label.configure(text="Loading…", image="")
+
+        def worker():
+            try:
+                url = f"https://img.youtube.com/vi/{vid}/hqdefault.jpg"
+                with urllib.request.urlopen(url, timeout=8) as resp:
+                    data = resp.read()
+
+                img = Image.open(io.BytesIO(data))
+                # Resize to a reasonable tooltip size
+                img.thumbnail((320, 180))
+
+                photo = ImageTk.PhotoImage(img)
+
+                def on_main():
+                    self._cache[vid] = photo
+                    self._pending.discard(vid)
+                    # Only update tooltip if we're still hovering some row
+                    if self._tip and self._tip.winfo_exists() and self._label:
+                        self._label.configure(image=photo, text="")
+                        self._label.image = photo
+
+                self.root.after(0, on_main)
+            except Exception:
+                def on_main_fail():
+                    self._pending.discard(vid)
+                    if self._tip and self._tip.winfo_exists() and self._label:
+                        self._label.configure(text="(thumbnail unavailable)", image="")
+                self.root.after(0, on_main_fail)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @staticmethod
+    def _extract_video_id_from_url(url: str) -> str | None:
+        if not url:
+            return None
+        m = ThumbnailHover._YOUTUBE_ID_RE.search(url)
+        return m.group(1) if m else None
+
+    def _hide_tip(self) -> None:
+        if self._tip and self._tip.winfo_exists():
+            self._tip.destroy()
+        self._tip = None
+        self._label = None
 
 
 class YTRadarApp(tk.Tk):
@@ -84,9 +218,9 @@ class YTRadarApp(tk.Tk):
 
 
         self._build_ui()
-        self.after(100, self._poll_queue)
 
         self.after(100, self._poll_queue)
+
 
     # -----------------------------
     # UI
@@ -132,6 +266,17 @@ class YTRadarApp(tk.Tk):
         self.tree.bind("<Double-1>", self._copy_selected_url)
         self.tree.bind("<<TreeviewSelect>>", self._on_select_row)
 
+        # Attaching hover thumbnails after tree exists
+        def get_video_id_for_row(row_id: str) -> str | None:
+            values = self.tree.item(row_id, "values")
+            if not values:
+                return None
+            url = values[-1]  # URL is last column
+            return ThumbnailHover._extract_video_id_from_url(url)
+
+        self._thumb_hover = ThumbnailHover(self, self.tree, get_video_id_for_row)
+
+
     def _set_status(self, msg: str) -> None:
         self._status.set(msg)
 
@@ -159,11 +304,6 @@ class YTRadarApp(tk.Tk):
                         self._render_search_as_stable(self._videos)
                         self._set_status("Search complete.")
                         self._set_samples("Select a row to view sample matching comments (when available).\n")
-
-                    elif task_name == "comment_terms_only":
-                        self._comment_results = data
-                        self._render_comment_results_as_stable(self._comment_results)
-                        self._set_status("Comment terms complete.")
 
                     elif task_name == "combined":
                         videos, results = data
@@ -211,17 +351,6 @@ class YTRadarApp(tk.Tk):
             "filters": self._get_filters(params),
         }
         self._run_in_thread(self._search_service.search, payload, "search_only")
-
-    def _run_comment_terms_only(self, params: dict) -> None:
-        payload = {
-            "query": params["query"],
-            "pages": params["pages"],
-            "per_page": params["per_page"],
-            "top_videos": params["top_videos"],
-            "terms": self._make_term_query(params),
-            "comments_per_video": params["comments_per_video"],
-        }
-        self._run_in_thread(self._comment_terms_service.run, payload, "comment_terms_only")
 
     def _run_combined(self, params: dict) -> None:
         """
