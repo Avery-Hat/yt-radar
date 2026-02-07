@@ -1,4 +1,4 @@
-from yt_radar.cli import run
+from gui.app import run_gui
 
 if __name__ == "__main__":
-    run()
+    run_gui()

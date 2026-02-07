@@ -1,0 +1,6 @@
+## DELETE THIS LINE AND CHANGE name to main.py, then run it ## 
+
+from yt_radar.cli import run
+
+if __name__ == "__main__":
+    run()
