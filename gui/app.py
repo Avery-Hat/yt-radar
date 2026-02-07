@@ -1,17 +1,17 @@
 from __future__ import annotations
 
+import io
 import json
+import re
 import threading
 import tkinter as tk
+import urllib.request
 from queue import Queue, Empty
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 
-# gui api implementation 
-from tkinter import simpledialog
-from yt_radar.config import get_api_key, save_api_key
+from PIL import Image, ImageTk
 
-
-from yt_radar.config import get_api_key
+from yt_radar.config import get_api_key, save_api_key, load_setting, save_setting
 from yt_radar.models import Video
 from yt_radar.services.filtering import Filters, VideoFilter
 from yt_radar.services.ranker import Ranker
@@ -20,34 +20,117 @@ from yt_radar.services.comment_terms_service import CommentTermsService, Comment
 from yt_radar.services.term_matcher import TermMatcher, TermQuery
 from yt_radar.youtube_client import YouTubeClient
 
-# adding imports for png mouse over functionality, line 269
-import io
-import re
-import urllib.request
-from PIL import Image, ImageTk
-
 
 def run_gui() -> None:
     app = YTRadarApp()
     app.mainloop()
 
 
+_UNI_ESC_RE = re.compile(r"\\u([0-9a-fA-F]{4})|\\U([0-9a-fA-F]{8})")
+
 def decode_unicode_escapes(s: str) -> str:
-    """
-    Decodes literal unicode escape sequences like '\\u2019' into real characters.
-    Leaves normal Unicode strings unchanged.
-    """
     if not s:
         return s
 
-    # Only attempt decoding if it actually looks escaped
-    if "\\u" not in s and "\\U" not in s:
-        return s
+    def repl(m: re.Match) -> str:
+        hex4 = m.group(1)
+        hex8 = m.group(2)
+        codepoint = int(hex4 or hex8, 16)
+        try:
+            return chr(codepoint)
+        except Exception:
+            return m.group(0)
 
-    try:
-        return s.encode("utf-8").decode("unicode_escape")
-    except Exception:
-        return s
+    # Only converts *literal* backslash-u sequences; leaves real emojis alone.
+    return _UNI_ESC_RE.sub(repl, s)
+
+
+
+
+class HelpDialog(tk.Toplevel):
+    def __init__(self, parent: tk.Tk, on_close) -> None:
+        super().__init__(parent)
+        self.title("yt-radar help")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()  # modal
+
+        self._dont_show = tk.BooleanVar(value=False)
+        self._on_close = on_close
+
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill="both", expand=True)
+
+        help_text = (
+            "What the controls mean:\n\n"
+            "Query: What you want to search on YouTube.\n"
+            "Pages / Per page: How many candidates to pull from YouTube.\n"
+            "Sort: How to rank candidates (views or comments).\n"
+            "Top Results: How many ranked videos you keep/show.\n\n"
+            "Filters:\n"
+            "  Min views / Min comments: Remove low-signal videos before ranking.\n"
+            "  Since: Only keep videos newer than N days (e.g. 30d).\n\n"
+            "Comment Analysis:\n"
+            "  Terms: Comma-separated keywords to look for in comments.\n"
+            "  Match: any = at least one term, all = must contain all terms.\n"
+            "  Videos to Analyze: How many of the top results to crawl comments for.\n"
+            "  Comments per video: Max comments to fetch per video.\n\n"
+            "Results columns:\n"
+            "  Hits = total term occurrences.\n"
+            "  Matched comments = number of comments containing your terms.\n\n"
+            "Tips:\n"
+            "- Start small (e.g. 2 pages, 5 videos, 100 comments) to save quota.\n"
+            "- Double-click a row to copy the URL.\n"
+        )
+
+        text = tk.Text(frame, width=72, height=20, wrap="word", font="TkTextFont")
+        text.insert("1.0", help_text)
+        text.configure(state="disabled")
+        text.grid(row=0, column=0, columnspan=3, sticky="nsew", pady=(0, 10))
+
+        # Left: checkbox
+        chk = ttk.Checkbutton(frame, text="Do not show this again", variable=self._dont_show)
+        chk.grid(row=1, column=0, sticky="w")
+
+        # Middle: reset button (icon-style)
+        reset_btn = ttk.Button(frame, text="Reset help tips", command=self._reset_help_tips)
+        reset_btn.grid(row=1, column=1, sticky="e", padx=(8, 8))
+
+        # Right: close button
+        btn = ttk.Button(frame, text="Close", command=self._close)
+        btn.grid(row=1, column=2, sticky="e")
+
+        frame.columnconfigure(0, weight=1)
+
+        # center dialog on parent
+        self.update_idletasks()
+        px = parent.winfo_rootx()
+        py = parent.winfo_rooty()
+        pw = parent.winfo_width()
+        ph = parent.winfo_height()
+        w = self.winfo_width()
+        h = self.winfo_height()
+        x = px + (pw - w) // 2
+        y = py + (ph - h) // 2
+        self.geometry(f"+{x}+{y}")
+
+        self.protocol("WM_DELETE_WINDOW", self._close)
+
+    def _reset_help_tips(self) -> None:
+        # Make sure the next app launch shows help again
+        save_setting("hide_help_on_start", False)
+
+        # Also uncheck this in the current dialog so it's consistent
+        self._dont_show.set(False)
+
+        messagebox.showinfo("Help tips reset", "Help will show again next time you start the app.")
+
+    def _close(self) -> None:
+        self.grab_release()
+        self.destroy()
+        self._on_close(bool(self._dont_show.get()))
+
+
 
 class ThumbnailHover:
     """
@@ -78,15 +161,12 @@ class ThumbnailHover:
     def _on_motion(self, event) -> None:
         row = self.tree.identify_row(event.y)
 
-        # If we moved to a new row, schedule showing a tooltip after a short delay
         if row != self._current_row:
             self._current_row = row
             self._cancel_scheduled()
-
             self._hide_tip()
 
             if row:
-                # show after 350ms so it doesn't flash while moving
                 self._after_id = self.root.after(350, lambda: self._show_for_row(row, event))
 
     def _on_leave(self, _event=None) -> None:
@@ -107,7 +187,6 @@ class ThumbnailHover:
         if not vid:
             return
 
-        # Create tooltip window
         if self._tip is None or not self._tip.winfo_exists():
             self._tip = tk.Toplevel(self.root)
             self._tip.wm_overrideredirect(True)
@@ -116,18 +195,15 @@ class ThumbnailHover:
             self._label = tk.Label(self._tip, text="Loading…", relief="solid", borderwidth=1)
             self._label.pack()
 
-        # Position near cursor
         x = self.root.winfo_pointerx() + 15
         y = self.root.winfo_pointery() + 15
         self._tip.geometry(f"+{x}+{y}")
 
-        # If cached, show immediately
         if vid in self._cache:
             self._label.configure(image=self._cache[vid], text="")
             self._label.image = self._cache[vid]
             return
 
-        # Otherwise download in background (but don't duplicate work)
         if vid in self._pending:
             return
 
@@ -141,25 +217,24 @@ class ThumbnailHover:
                     data = resp.read()
 
                 img = Image.open(io.BytesIO(data))
-                # Resize to a reasonable tooltip size
                 img.thumbnail((320, 180))
-
                 photo = ImageTk.PhotoImage(img)
 
                 def on_main():
                     self._cache[vid] = photo
                     self._pending.discard(vid)
-                    # Only update tooltip if we're still hovering some row
                     if self._tip and self._tip.winfo_exists() and self._label:
                         self._label.configure(image=photo, text="")
                         self._label.image = photo
 
                 self.root.after(0, on_main)
             except Exception:
+
                 def on_main_fail():
                     self._pending.discard(vid)
                     if self._tip and self._tip.winfo_exists() and self._label:
                         self._label.configure(text="(thumbnail unavailable)", image="")
+
                 self.root.after(0, on_main_fail)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -184,79 +259,86 @@ class YTRadarApp(tk.Tk):
         self.title("yt-radar")
         self.geometry("1280x720")
 
-        # ---- API key (inside __init__) ----
+        # styling (kept simple, no scaling)
+        self._style = ttk.Style(self)
+        try:
+            self._style.theme_use("clam")
+        except Exception:
+            pass
+        self._style.configure("Treeview", rowheight=22)
+        self._style.configure("Treeview.Heading", font=("TkDefaultFont", 10, "bold"))
+
+        # ---- API key ----
         try:
             api_key = get_api_key()
         except Exception:
             api_key = simpledialog.askstring(
                 "YouTube API Key Required",
-                "Enter your YouTube Data API key.\n\n"
-                "It will be saved on this computer for next time.",
+                "Enter your YouTube Data API key.\n\nIt will be saved on this computer for next time.",
                 show="*",
             )
             if not api_key:
                 messagebox.showerror("Missing API Key", "No API key provided. Exiting.")
                 self.destroy()
                 return
-
             save_api_key(api_key)
 
-        # ---- always run initialization after we have api_key ----
         self._yt = YouTubeClient(api_key=api_key)
         self._ranker = Ranker()
-
         self._search_service = SearchService(yt=self._yt, ranker=self._ranker, vfilter=VideoFilter())
         self._comment_terms_service = CommentTermsService(yt=self._yt, ranker=self._ranker, matcher=TermMatcher())
 
         self._q: Queue = Queue()
 
-        # current data
         self._videos: list[Video] = []
         self._comment_results: list[CommentTermsResult] = []
         self._combined_results: list[CommentTermsResult] = []
-        self._analysis_by_video_id: dict[str, CommentTermsResult] = {} #adding comments into json data
+        self._analysis_by_video_id: dict[str, CommentTermsResult] = {}
 
+        # Header (help only; scaling buttons removed)
+        header = ttk.Frame(self)
+        header.pack(fill="x", padx=10, pady=(10, 0))
+        ttk.Button(header, text="?", width=3, command=self._open_help).pack(side="right", padx=(0, 8))
 
         self._build_ui()
 
+        self.after(0, self._maybe_show_help_on_start)
         self.after(100, self._poll_queue)
-
 
     # -----------------------------
     # UI
     # -----------------------------
     def _build_ui(self) -> None:
-        # Single unified params panel
+        content = ttk.Frame(self)
+        content.pack(fill="both", expand=True)
+
         self.params = UnifiedParamsFrame(
-            self,
+            content,
             on_run_search=self._run_search_only,
             on_run_combined=self._run_combined,
             on_export=self._export_search_json,
         )
-        self.params.pack(fill="x", padx=10, pady=(10, 6))
+        self.params.pack(fill="x", padx=10, pady=(6, 6))
 
-        # Results
-        self._build_results_area()
+        self._build_results_area(parent=content)
 
-        # Samples viewer (always visible)
-        self.sample_box = tk.Text(self, height=9, wrap="word")
+        self.sample_box = tk.Text(content, height=9, wrap="word")
         self.sample_box.insert("1.0", "Select a row to view sample matching comments (when available).\n")
         self.sample_box.configure(state="disabled")
         self.sample_box.pack(fill="x", padx=10, pady=(0, 10))
 
-        # Status bar
         self._status = tk.StringVar(value="Ready")
         status_bar = ttk.Label(self, textvariable=self._status, anchor="w")
         status_bar.pack(side="bottom", fill="x")
 
-        # Stable columns (no UI jumping)
         self._configure_results_stable()
 
-    def _build_results_area(self) -> None:
-        self.results_frame = ttk.LabelFrame(self, text="Results (double-click row to copy URL)")
+    def _build_results_area(self, parent) -> None:
+        self.results_frame = ttk.LabelFrame(parent, text="Results (double-click row to copy URL)")
         self.results_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         self.tree = ttk.Treeview(self.results_frame, columns=(), show="headings")
+
         yscroll = ttk.Scrollbar(self.results_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=yscroll.set)
 
@@ -266,19 +348,30 @@ class YTRadarApp(tk.Tk):
         self.tree.bind("<Double-1>", self._copy_selected_url)
         self.tree.bind("<<TreeviewSelect>>", self._on_select_row)
 
-        # Attaching hover thumbnails after tree exists
         def get_video_id_for_row(row_id: str) -> str | None:
             values = self.tree.item(row_id, "values")
             if not values:
                 return None
-            url = values[-1]  # URL is last column
+            url = values[-1]
             return ThumbnailHover._extract_video_id_from_url(url)
 
         self._thumb_hover = ThumbnailHover(self, self.tree, get_video_id_for_row)
 
+    def _open_help(self) -> None:
+        def on_close(dont_show_again: bool) -> None:
+            if dont_show_again:
+                save_setting("hide_help_on_start", True)
+
+        HelpDialog(self, on_close=on_close)
+
+    def _maybe_show_help_on_start(self) -> None:
+        hide = bool(load_setting("hide_help_on_start", False))
+        if not hide:
+            self._open_help()
 
     def _set_status(self, msg: str) -> None:
-        self._status.set(msg)
+        if hasattr(self, "_status") and self._status is not None:
+            self._status.set(msg)
 
     # -----------------------------
     # Background runner
@@ -310,15 +403,10 @@ class YTRadarApp(tk.Tk):
                         self._videos = videos
                         self._combined_results = results
 
-                        # NEW: index comment analysis by video_id
-                        self._analysis_by_video_id = {
-                            r.video.video_id: r for r in results
-                        }
+                        self._analysis_by_video_id = {r.video.video_id: r for r in results}
 
                         self._render_comment_results_as_stable(self._combined_results)
                         self._set_status("Analysis complete.")
-
-
                 else:
                     self._set_status("Error.")
                     messagebox.showerror(f"{task_name} failed", data)
@@ -387,7 +475,6 @@ class YTRadarApp(tk.Tk):
         self._set_status("Running analysis...")
         threading.Thread(target=worker, daemon=True).start()
 
-
     # -----------------------------
     # Results table (stable columns)
     # -----------------------------
@@ -401,6 +488,7 @@ class YTRadarApp(tk.Tk):
         for c in cols:
             self.tree.heading(c, text=c)
 
+        # fixed widths (no scaling)
         self.tree.column("hits", width=80, anchor="e")
         self.tree.column("matched_comments", width=130, anchor="e")
         self.tree.column("views", width=90, anchor="e")
@@ -474,10 +562,7 @@ class YTRadarApp(tk.Tk):
 
         idx = self.tree.index(sel[0])
 
-        # Prefer combined results if present and last action was combined;
-        # otherwise comment-only; otherwise none.
         backing: list[CommentTermsResult] | None = None
-        # Heuristic: if combined_results currently rendered, it should match row count
         if self._combined_results and len(self._combined_results) == len(self.tree.get_children()):
             backing = self._combined_results
         elif self._comment_results and len(self._comment_results) == len(self.tree.get_children()):
@@ -521,7 +606,6 @@ class YTRadarApp(tk.Tk):
             return
 
         payload = []
-
         for v in self._videos:
             item = {
                 "video_id": v.video_id,
@@ -533,7 +617,6 @@ class YTRadarApp(tk.Tk):
                 "url": v.url,
             }
 
-            # Attach comment analysis if available
             r = self._analysis_by_video_id.get(v.video_id)
             if r:
                 item["comment_analysis"] = {
@@ -550,7 +633,6 @@ class YTRadarApp(tk.Tk):
         messagebox.showinfo("Saved", f"Saved {len(payload)} results to:\n{path}")
 
 
-
 class UnifiedParamsFrame(ttk.LabelFrame):
     """
     One panel containing everything:
@@ -564,21 +646,17 @@ class UnifiedParamsFrame(ttk.LabelFrame):
         self._on_run_combined = on_run_combined
         self._on_export = on_export
 
-        # shared
         self.query_var = tk.StringVar()
         self.pages_var = tk.IntVar(value=3)
         self.per_page_var = tk.IntVar(value=50)
 
-        # search behavior
         self.top_var = tk.IntVar(value=5)
         self.sort_var = tk.StringVar(value="views")
 
-        # filters
         self.min_views_var = tk.IntVar(value=0)
         self.min_comments_var = tk.IntVar(value=0)
         self.since_var = tk.StringVar(value="")  # "30d"
 
-        # comment terms
         self.terms_var = tk.StringVar()
         self.match_var = tk.StringVar(value="any")
         self.top_videos_var = tk.IntVar(value=10)
@@ -587,13 +665,11 @@ class UnifiedParamsFrame(ttk.LabelFrame):
         self._build()
 
     def _build(self) -> None:
-        # Row 0 - Query
         ttk.Label(self, text="Query").grid(row=0, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(self, textvariable=self.query_var, width=60).grid(
             row=0, column=1, columnspan=9, sticky="we", padx=6, pady=6
         )
 
-        # Row 1 - Search pagination + ranking
         ttk.Label(self, text="Pages").grid(row=1, column=0, sticky="w", padx=6, pady=6)
         ttk.Spinbox(self, from_=1, to=50, textvariable=self.pages_var, width=6).grid(
             row=1, column=1, sticky="w", padx=6, pady=6
@@ -614,7 +690,6 @@ class UnifiedParamsFrame(ttk.LabelFrame):
             row=1, column=7, sticky="w", padx=6, pady=6
         )
 
-        # Row 2 - Filters
         ttk.Label(self, text="Min Views").grid(row=2, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(self, textvariable=self.min_views_var, width=10).grid(row=2, column=1, sticky="w", padx=6, pady=6)
 
@@ -624,7 +699,6 @@ class UnifiedParamsFrame(ttk.LabelFrame):
         ttk.Label(self, text='Since (e.g. "30d")').grid(row=2, column=4, sticky="w", padx=6, pady=6)
         ttk.Entry(self, textvariable=self.since_var, width=12).grid(row=2, column=5, sticky="w", padx=6, pady=6)
 
-        # Row 3 - Comment term controls
         ttk.Label(self, text="Terms (comma-separated)").grid(row=3, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(self, textvariable=self.terms_var, width=40).grid(
             row=3, column=1, columnspan=5, sticky="we", padx=6, pady=6
@@ -635,7 +709,6 @@ class UnifiedParamsFrame(ttk.LabelFrame):
             row=3, column=7, sticky="w", padx=6, pady=6
         )
 
-        # Row 4 - Comment term limits
         ttk.Label(self, text="Videos to Analyze (comments)").grid(row=4, column=0, sticky="w", padx=6, pady=6)
         ttk.Spinbox(self, from_=1, to=200, textvariable=self.top_videos_var, width=8).grid(
             row=4, column=1, sticky="w", padx=6, pady=6
@@ -646,7 +719,6 @@ class UnifiedParamsFrame(ttk.LabelFrame):
             row=4, column=3, sticky="w", padx=6, pady=6
         )
 
-        # Row 5 - Buttons
         ttk.Button(self, text="Run Query Only", command=self._run_search).grid(
             row=5, column=7, sticky="e", padx=6, pady=6
         )
@@ -658,6 +730,7 @@ class UnifiedParamsFrame(ttk.LabelFrame):
         )
 
         self.columnconfigure(1, weight=1)
+        self.columnconfigure(9, weight=1)
 
     def _parse_days(self, s: str):
         s = (s or "").strip().lower()

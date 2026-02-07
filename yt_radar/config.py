@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-
+import json
 
 _ENV_FILENAME = ".env"
 _KEY_NAME = "YOUTUBE_API_KEY"
@@ -123,3 +123,41 @@ def _find_repo_root() -> Path:
         if (p / "main.py").exists() or (p / ".git").exists():
             return p
     return cwd
+
+
+import json
+from pathlib import Path
+import os
+
+def _user_settings_path() -> Path:
+    # keep it alongside your config.env, but as json
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming")))
+        return base / "yt-radar" / "settings.json"
+    return Path.home() / ".config" / "yt-radar" / "settings.json"
+
+
+# new loading setting for additional options (creating a "do not show me again" option for a popup)
+
+def load_setting(key: str, default=None):
+    path = _user_settings_path()
+    if not path.exists():
+        return default
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data.get(key, default)
+    except Exception:
+        return default
+
+
+def save_setting(key: str, value) -> None:
+    path = _user_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data[key] = value
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
