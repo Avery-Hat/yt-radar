@@ -38,6 +38,18 @@ All data is fetched via the **YouTube Data API v3**.
   - **all** terms
 - Rank videos by keyword activity
 - Display **sample matching comments** for context
+- Show **unique comment counts per term**
+  - A comment counts once per term (even if the word appears multiple times)
+- Toggle a **Term Totals panel** to see keyword distribution per video
+- Control how many sample comments are displayed (display-only limit)
+
+#### Term Counting Model
+
+Keyword counts are based on **unique comments**:
+
+- If a keyword appears anywhere in a comment, it counts as 1.
+- Repeating the same word multiple times in a single comment does not increase the count.
+- This prevents spam or repeated phrases from inflating term totals.
 
 ### GUI (Primary Interface)
 
@@ -46,6 +58,10 @@ All data is fetched via the **YouTube Data API v3**.
 - Hover thumbnails, copy-to-clipboard URLs
 - Built for **manual exploration and iteration**
 - Windows `.exe` build supported
+- Toggleable **Term Totals panel**
+- Adjustable number of sample comments shown
+- Hover video thumbnails
+- Double-click to copy URL
 
 ### CLI (Shell and testing area)
 - Read for_cli.txt on how to enable.
@@ -208,6 +224,6 @@ Options:
 
 ## Project Status
 
-Completed. May add additional functions if I can think of any. 
+Stable and feature-complete. Minor things may be added in the future.
 
 ```
