@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List
 from collections import Counter
 from typing import Iterable, List, Dict
 
 from yt_radar.models import Video
 from yt_radar.youtube_client import YouTubeClient
-from yt_radar.services.ranker import Ranker
 from yt_radar.services.term_matcher import TermMatcher, TermQuery
 
 
@@ -20,9 +18,8 @@ class CommentTermsResult:
     per_term_unique_comments: Dict[str, int]  # NEW
 
 class CommentTermsService:
-    def __init__(self, yt: YouTubeClient, ranker: Ranker, matcher: TermMatcher) -> None:
+    def __init__(self, yt: YouTubeClient, matcher: TermMatcher) -> None:
         self._yt = yt
-        self._ranker = ranker
         self._matcher = matcher
 
     def run(
@@ -37,12 +34,10 @@ class CommentTermsService:
         video_ids = self._yt.search_video_ids(query=query, pages=pages, per_page=per_page)
         videos = self._yt.fetch_videos(video_ids)
 
-        # NOTE: your run() always ranks by views, independent of any GUI "sort"
-        ranked = self._ranker.sort(videos, sort_key="views")
-        ranked = ranked[: max(1, top_videos)]
+        picked = list(videos)[: max(1, top_videos)]
 
         results, _term_totals = self.run_on_videos(
-            videos=ranked,
+            videos=picked,
             terms=terms,
             comments_per_video=comments_per_video,
         )

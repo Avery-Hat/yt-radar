@@ -8,14 +8,11 @@ import tkinter as tk
 import urllib.request
 from queue import Queue, Empty
 from tkinter import ttk, messagebox, filedialog, simpledialog
-from collections import Counter
-
 from PIL import Image, ImageTk
 
 from yt_radar.config import get_api_key, save_api_key, load_setting, save_setting
 from yt_radar.models import Video
 from yt_radar.services.filtering import Filters, VideoFilter
-from yt_radar.services.ranker import Ranker
 from yt_radar.services.search_service import SearchService
 from yt_radar.services.comment_terms_service import CommentTermsService, CommentTermsResult
 from yt_radar.services.term_matcher import TermMatcher, TermQuery
@@ -67,7 +64,6 @@ class HelpDialog(tk.Toplevel):
             "Search:\n"
             "  Query: What you want to search on YouTube.\n"
             "  Pages / Per page: How many candidates to pull from YouTube.\n"
-            "  Sort: How to rank candidates (views or comments).\n"
             "  Top Results (display): How many ranked videos you keep/show in the table.\n\n"
             "Filters:\n"
             "  Min Views / Min Comments: Remove low-signal videos before ranking.\n"
@@ -270,7 +266,7 @@ class YTRadarApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("yt-radar")
-        self.geometry("1280x720")
+        self.geometry("1280x890")
 
         # styling (kept simple, no scaling)
         self._style = ttk.Style(self)
@@ -297,9 +293,8 @@ class YTRadarApp(tk.Tk):
             save_api_key(api_key)
 
         self._yt = YouTubeClient(api_key=api_key)
-        self._ranker = Ranker()
-        self._search_service = SearchService(yt=self._yt, ranker=self._ranker, vfilter=VideoFilter())
-        self._comment_terms_service = CommentTermsService(yt=self._yt, ranker=self._ranker, matcher=TermMatcher())
+        self._search_service = SearchService(yt=self._yt, vfilter=VideoFilter())
+        self._comment_terms_service = CommentTermsService(yt=self._yt, matcher=TermMatcher())
         self._last_term_totals: dict[str, int] = {} #new: comment total
 
         self._q: Queue = Queue()
@@ -517,14 +512,13 @@ class YTRadarApp(tk.Tk):
             "pages": params["pages"],
             "per_page": params["per_page"],
             "top": params["top"],
-            "sort": params["sort"],
             "filters": self._get_filters(params),
         }
         self._run_in_thread(self._search_service.search, payload, "search_only")
 
     def _run_combined(self, params: dict) -> None:
         """
-        Combined = Search (filters+sort+top) -> pick top_videos -> term match on those videos.
+        Combined = Search (filters+top) -> pick top_videos -> term match on those videos.
         """
 
         def combined_worker():
@@ -533,7 +527,6 @@ class YTRadarApp(tk.Tk):
                 pages=params["pages"],
                 per_page=params["per_page"],
                 top=params["top"],
-                sort=params["sort"],
                 filters=self._get_filters(params),
             )
 
@@ -766,7 +759,6 @@ class UnifiedParamsFrame(ttk.LabelFrame):
         self.per_page_var = tk.IntVar(value=50)
 
         self.top_var = tk.IntVar(value=5)
-        self.sort_var = tk.StringVar(value="views")
 
         self.min_views_var = tk.IntVar(value=0)
         self.min_comments_var = tk.IntVar(value=0)
@@ -816,11 +808,6 @@ class UnifiedParamsFrame(ttk.LabelFrame):
         ttk.Label(self, text="Top Results (display)").grid(row=1, column=4, sticky="w", padx=6, pady=6)
         ttk.Spinbox(self, from_=1, to=200, textvariable=self.top_var, width=6).grid(
             row=1, column=5, sticky="w", padx=6, pady=6
-        )
-
-        ttk.Label(self, text="Sort").grid(row=1, column=6, sticky="w", padx=6, pady=6)
-        ttk.Combobox(self, textvariable=self.sort_var, values=["views", "comments"], width=10, state="readonly").grid(
-            row=1, column=7, sticky="w", padx=6, pady=6
         )
 
         ttk.Label(self, text="Min Views").grid(row=2, column=0, sticky="w", padx=6, pady=6)
@@ -904,7 +891,6 @@ class UnifiedParamsFrame(ttk.LabelFrame):
             "pages": int(self.pages_var.get()),
             "per_page": int(self.per_page_var.get()),
             "top": int(self.top_var.get()),
-            "sort": self.sort_var.get(),
             "min_views": max(0, int(self.min_views_var.get())),
             "min_comments": max(0, int(self.min_comments_var.get())),
             "since_days": self._parse_days(self.since_var.get()),
