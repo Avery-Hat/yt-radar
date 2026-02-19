@@ -8,6 +8,7 @@ import tkinter as tk
 import urllib.request
 from queue import Queue, Empty
 from tkinter import ttk, messagebox, filedialog, simpledialog
+from collections import Counter
 
 from PIL import Image, ImageTk
 
@@ -63,18 +64,30 @@ class HelpDialog(tk.Toplevel):
 
         help_text = (
             "What the controls mean:\n\n"
-            "Query: What you want to search on YouTube.\n"
-            "Pages / Per page: How many candidates to pull from YouTube.\n"
-            "Sort: How to rank candidates (views or comments).\n"
-            "Top Results: How many ranked videos you keep/show.\n\n"
+            "Search:\n"
+            "  Query: What you want to search on YouTube.\n"
+            "  Pages / Per page: How many candidates to pull from YouTube.\n"
+            "  Sort: How to rank candidates (views or comments).\n"
+            "  Top Results (display): How many ranked videos you keep/show in the table.\n\n"
             "Filters:\n"
-            "  Min views / Min comments: Remove low-signal videos before ranking.\n"
+            "  Min Views / Min Comments: Remove low-signal videos before ranking.\n"
             "  Since: Only keep videos newer than N days (e.g. 30d).\n\n"
-            "Comment Analysis:\n"
+            "Comment analysis:\n"
             "  Terms: Comma-separated keywords to look for in comments.\n"
             "  Match: any = at least one term, all = must contain all terms.\n"
             "  Videos to Analyze: How many of the top results to crawl comments for.\n"
-            "  Comments per video: Max comments to fetch per video.\n\n"
+            "  Comments/video: Max comments to fetch per video.\n\n"
+            "Term totals (unique comments):\n"
+            "  Show term totals: Toggles the totals panel.\n"
+            "  Counts are 'unique comments' per term:\n"
+            "    - If a term appears anywhere in a comment, it counts as 1 for that comment.\n"
+            "    - Example: a comment saying 'amazing' 20 times still counts as 1.\n"
+            "  Interaction:\n"
+            "    - Click a result row to show totals for that selected video.\n"
+            "    - Click empty space in the results table to reset back to global totals.\n\n"
+            "Bottom panel (sample matching comments):\n"
+            "  Samples to show: How many sample matching comments to display for the selected row.\n"
+            "  (This only affects display; fetching is controlled by Comments/video.)\n\n"
             "Results columns:\n"
             "  Hits = total term occurrences.\n"
             "  Matched comments = number of comments containing your terms.\n\n"
@@ -287,6 +300,7 @@ class YTRadarApp(tk.Tk):
         self._ranker = Ranker()
         self._search_service = SearchService(yt=self._yt, ranker=self._ranker, vfilter=VideoFilter())
         self._comment_terms_service = CommentTermsService(yt=self._yt, ranker=self._ranker, matcher=TermMatcher())
+        self._last_term_totals: dict[str, int] = {} #new: comment total
 
         self._q: Queue = Queue()
 
@@ -322,6 +336,23 @@ class YTRadarApp(tk.Tk):
 
         self._build_results_area(parent=content)
 
+        # start of new code: for comment unique terms counter
+        self.term_totals_frame = ttk.LabelFrame(content, text="Term totals (unique comments)")
+        self.term_totals_frame.pack(fill="x", padx=10, pady=(0, 6))
+
+        self.term_totals_tree = ttk.Treeview(
+            self.term_totals_frame,
+            columns=("term", "count"),
+            show="headings",
+            height=4,
+        )
+        self.term_totals_tree.heading("term", text="term")
+        self.term_totals_tree.heading("count", text="unique comments")
+        self.term_totals_tree.column("term", width=200)
+        self.term_totals_tree.column("count", width=140, anchor="e")
+        self.term_totals_tree.pack(fill="x", padx=6, pady=6)
+        # end of new code 
+
         self.sample_box = tk.Text(content, height=9, wrap="word")
         self.sample_box.insert("1.0", "Select a row to view sample matching comments (when available).\n")
         self.sample_box.configure(state="disabled")
@@ -347,6 +378,8 @@ class YTRadarApp(tk.Tk):
 
         self.tree.bind("<Double-1>", self._copy_selected_url)
         self.tree.bind("<<TreeviewSelect>>", self._on_select_row)
+        self.tree.bind("<Button-1>", self._on_tree_click, add=True)
+
 
         def get_video_id_for_row(row_id: str) -> str | None:
             values = self.tree.item(row_id, "values")
@@ -374,6 +407,27 @@ class YTRadarApp(tk.Tk):
             self._status.set(msg)
 
     # -----------------------------
+    # reset selection on click
+    # -----------------------------
+
+    def _on_tree_click(self, event) -> None:
+        row = self.tree.identify_row(event.y)
+        if row:
+            return  # normal selection will happen and _on_select_row will fire
+
+        # clicked empty area -> reset to global totals + clear samples
+        self.tree.selection_remove(self.tree.selection())
+        self._set_samples("Select a row to view sample matching comments (when available).\n")
+
+        show = bool(self.params.show_term_totals_var.get())
+        self._set_term_totals_visible(show)
+        if show and self._last_term_totals:
+            self._render_term_totals(self._last_term_totals)
+        else:
+            self._clear_term_totals()
+
+
+    # -----------------------------
     # Background runner
     # -----------------------------
     def _run_in_thread(self, fn, payload: dict, task_name: str) -> None:
@@ -391,29 +445,57 @@ class YTRadarApp(tk.Tk):
         try:
             while True:
                 status, task_name, data = self._q.get_nowait()
-                if status == "ok":
-                    if task_name == "search_only":
-                        self._videos = data
-                        self._render_search_as_stable(self._videos)
-                        self._set_status("Search complete.")
-                        self._set_samples("Select a row to view sample matching comments (when available).\n")
 
-                    elif task_name == "combined":
-                        videos, results = data
-                        self._videos = videos
-                        self._combined_results = results
-
-                        self._analysis_by_video_id = {r.video.video_id: r for r in results}
-
-                        self._render_comment_results_as_stable(self._combined_results)
-                        self._set_status("Analysis complete.")
-                else:
+                if status != "ok":
                     self._set_status("Error.")
                     messagebox.showerror(f"{task_name} failed", data)
+                    continue
+
+                if task_name == "search_only":
+                    self._videos = data
+                    self._combined_results = []
+                    self._analysis_by_video_id = {}
+                    self._last_term_totals = {}
+
+                    self._render_search_as_stable(self._videos)
+                    self._set_samples("Select a row to view sample matching comments (when available).\n")
+
+                    # hide/clear term totals for search-only
+                    self._set_term_totals_visible(False)
+                    self._clear_term_totals()
+
+                    self._set_status("Search complete.")
+
+                elif task_name == "combined":
+                    term_totals: dict[str, int] = {}
+
+                    if isinstance(data, tuple) and len(data) == 3:
+                        videos, results, term_totals = data
+                    else:
+                        videos, results = data
+
+                    self._videos = videos
+                    self._combined_results = results
+                    self._analysis_by_video_id = {r.video.video_id: r for r in results}
+
+                    self._render_comment_results_as_stable(self._combined_results)
+
+                    self._last_term_totals = dict(term_totals or {})
+                    show = bool(self.params.show_term_totals_var.get())
+                    self._set_term_totals_visible(show)
+
+                    if show and self._last_term_totals:
+                        self._render_term_totals(self._last_term_totals)
+                    else:
+                        self._clear_term_totals()
+
+                    self._set_status("Analysis complete.")
+
         except Empty:
             pass
 
         self.after(100, self._poll_queue)
+
 
     # -----------------------------
     # Parameter parsing + service calls
@@ -458,12 +540,13 @@ class YTRadarApp(tk.Tk):
             picked = videos[: max(1, min(params["top_videos"], len(videos)))]
             tq = self._make_term_query(params)
 
-            results = self._comment_terms_service.run_on_videos(
+            results, term_totals = self._comment_terms_service.run_on_videos(
                 videos=picked,
                 terms=tq,
                 comments_per_video=params["comments_per_video"],
             )
-            return videos, results
+
+            return videos, results, term_totals
 
         def worker():
             try:
@@ -474,6 +557,29 @@ class YTRadarApp(tk.Tk):
 
         self._set_status("Running analysis...")
         threading.Thread(target=worker, daemon=True).start()
+
+    # -----------------------------
+    # NEW: adding comment counter
+    # -----------------------------
+    def _clear_term_totals(self) -> None:
+        if hasattr(self, "term_totals_tree"):
+            for row in self.term_totals_tree.get_children():
+                self.term_totals_tree.delete(row)
+
+    def _render_term_totals(self, totals: dict[str, int]) -> None:
+        self._clear_term_totals()
+        # sorted: highest first
+        for term, n in sorted(totals.items(), key=lambda kv: (-kv[1], kv[0].lower())):
+            self.term_totals_tree.insert("", "end", values=(term, f"{n:,}"))
+
+    def _set_term_totals_visible(self, visible: bool) -> None:
+        if not hasattr(self, "term_totals_frame"):
+            return
+        if visible:
+            self.term_totals_frame.pack(fill="x", padx=10, pady=(0, 6))
+        else:
+            self.term_totals_frame.pack_forget()
+
 
     # -----------------------------
     # Results table (stable columns)
@@ -573,11 +679,20 @@ class YTRadarApp(tk.Tk):
             return
 
         r = backing[idx]
+
+        show = bool(self.params.show_term_totals_var.get())
+        if show and getattr(r, "per_term_unique_comments", None):
+            self._set_term_totals_visible(True)
+            self._render_term_totals(r.per_term_unique_comments)
+
         text = f"{r.video.title}\n{r.video.url}\n\n"
         if not r.samples:
             text += "(No samples captured.)\n"
         else:
-            for s in r.samples:
+            limit = self.params.get_samples_to_show()
+            samples = r.samples if limit <= 0 else r.samples[:limit]
+
+            for s in samples:
                 s = decode_unicode_escapes(s)
                 text += f"- {s.strip()}\n\n"
 
@@ -662,9 +777,27 @@ class UnifiedParamsFrame(ttk.LabelFrame):
         self.top_videos_var = tk.IntVar(value=10)
         self.comments_per_video_var = tk.IntVar(value=200)
 
+        self.show_term_totals_var = tk.BooleanVar(value=True) #creating counter for comment terms (limited 1 per comment)
+        self.samples_to_show_var = tk.IntVar(value=10) #added variable for modifiable sample comments shown.
+
+        self.samples_spinbox: ttk.Spinbox | None = None
+
         self._build()
 
     def _build(self) -> None:
+        #new: allowing total comment samples to be modifiable
+        ttk.Label(self, text="Samples to show").grid(row=4, column=4, sticky="w", padx=6, pady=6)
+
+        self.samples_spinbox = ttk.Spinbox(
+            self,
+            from_=0,
+            to=200,
+            textvariable=self.samples_to_show_var,
+            width=8,
+        )
+        self.samples_spinbox.grid(row=4, column=5, sticky="w", padx=6, pady=6)
+
+
         ttk.Label(self, text="Query").grid(row=0, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(self, textvariable=self.query_var, width=60).grid(
             row=0, column=1, columnspan=9, sticky="we", padx=6, pady=6
@@ -728,6 +861,13 @@ class UnifiedParamsFrame(ttk.LabelFrame):
         ttk.Button(self, text="Export JSON", command=self._on_export).grid(
             row=5, column=6, sticky="e", padx=6, pady=6
         )
+        # adding button for comments terms amount (1 per comment)
+        ttk.Checkbutton(
+            self,
+            text="Show term totals",
+            variable=self.show_term_totals_var,
+        ).grid(row=5, column=0, sticky="w", padx=6, pady=6)
+
 
         self.columnconfigure(1, weight=1)
         self.columnconfigure(9, weight=1)
@@ -759,6 +899,7 @@ class UnifiedParamsFrame(ttk.LabelFrame):
 
     def collect_params(self) -> dict:
         return {
+            "samples_to_show": int(self.samples_to_show_var.get()), #new: adding sample comments to be modifiable
             "query": self.query_var.get().strip(),
             "pages": int(self.pages_var.get()),
             "per_page": int(self.per_page_var.get()),
@@ -771,7 +912,20 @@ class UnifiedParamsFrame(ttk.LabelFrame):
             "match": self.match_var.get(),
             "top_videos": int(self.top_videos_var.get()),
             "comments_per_video": int(self.comments_per_video_var.get()),
+            "show_term_totals": bool(self.show_term_totals_var.get()),
         }
+
+    def get_samples_to_show(self) -> int:
+        # Read the widget text directly (more reliable than IntVar for ttk.Spinbox)
+        if self.samples_spinbox is None:
+            return int(self.samples_to_show_var.get() or 0)
+
+        raw = (self.samples_spinbox.get() or "").strip()
+        try:
+            return max(0, int(raw))
+        except Exception:
+            return max(0, int(self.samples_to_show_var.get() or 0))
+
 
     def _run_search(self) -> None:
         if not self._base_validate():
