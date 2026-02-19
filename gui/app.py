@@ -4,6 +4,7 @@ import io
 import json
 import re
 import threading
+import sys # new: for windows app
 import tkinter as tk
 import urllib.request
 from queue import Queue, Empty
@@ -91,8 +92,25 @@ class HelpDialog(tk.Toplevel):
             "- Start small (e.g. 2 pages, 5 videos, 100 comments) to save quota.\n"
             "- Double-click a row to copy the URL.\n"
         )
+        #new: changing currently bugged win11 theme
+        style = ttk.Style(self)
+        bg = style.lookup("TFrame", "background") or self.cget("bg")
+        fg = style.lookup("TLabel", "foreground") or "black"
 
-        text = tk.Text(frame, width=72, height=20, wrap="word", font="TkTextFont")
+        text = tk.Text(
+            frame,
+            width=72,
+            height=20,
+            wrap="word",
+            font="TkTextFont",
+            bg=bg,
+            fg=fg,
+            relief="flat",
+            borderwidth=1,
+            highlightthickness=1,
+            highlightbackground=bg,
+        )
+
         text.insert("1.0", help_text)
         text.configure(state="disabled")
         text.grid(row=0, column=0, columnspan=3, sticky="nsew", pady=(0, 10))
@@ -269,11 +287,29 @@ class YTRadarApp(tk.Tk):
         self.geometry("1280x890")
 
         # styling (kept simple, no scaling)
+        import sys
         self._style = ttk.Style(self)
-        try:
-            self._style.theme_use("clam")
-        except Exception:
-            pass
+
+        if sys.platform == "win32":
+            # Use native Windows ttk theme
+            for candidate in ("vista", "xpnative"):
+                try:
+                    self._style.theme_use(candidate)
+                    break
+                except tk.TclError:
+                    pass
+        else:
+            try:
+                self._style.theme_use("clam")
+            except tk.TclError:
+                pass
+
+        #  make window background match the ttk theme
+        bg = self._style.lookup("TFrame", "background")
+        if not bg:
+            bg = self.cget("bg")
+        self.configure(background=bg)
+
         self._style.configure("Treeview", rowheight=22)
         self._style.configure("Treeview.Heading", font=("TkDefaultFont", 10, "bold"))
 
@@ -348,7 +384,25 @@ class YTRadarApp(tk.Tk):
         self.term_totals_tree.pack(fill="x", padx=6, pady=6)
         # end of new code 
 
-        self.sample_box = tk.Text(content, height=9, wrap="word")
+        #new: for windows launch: sample box (tk.Text ignores ttk theme, so set colors explicitly)
+        bg = self._style.lookup("TFrame", "background") or self.cget("bg")
+        fg = self._style.lookup("TLabel", "foreground") or "black"
+
+        self.sample_box = tk.Text(
+            content,
+            height=9,
+            wrap="word",
+            bg=bg,
+            fg=fg,
+            relief="flat",
+            borderwidth=1,
+            highlightthickness=1,
+            highlightbackground=bg,
+        )
+        self.sample_box.insert("1.0", "Select a row to view sample matching comments (when available).\n")
+        self.sample_box.configure(state="disabled")
+        self.sample_box.pack(fill="x", padx=10, pady=(0, 10))
+
         self.sample_box.insert("1.0", "Select a row to view sample matching comments (when available).\n")
         self.sample_box.configure(state="disabled")
         self.sample_box.pack(fill="x", padx=10, pady=(0, 10))
