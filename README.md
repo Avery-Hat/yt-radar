@@ -1,229 +1,135 @@
 # yt-radar
 
-**yt-radar** is a Python tool for exploring YouTube search results using *engagement data* — and digging into **comment text** to surface signals that views alone don’t show.
+**yt-radar** is a desktop YouTube analysis tool that ranks videos by engagement and explores comments to find well developed videos beyond raw view counts.
 
 It helps answer questions like:
 
-- *Which videos actually have meaningful discussion?*
-- *Which videos mention specific terms in their comments?*
-- *Does this video actually have positive response? negative?*
+* Which videos actually generate discussion?
+* Which videos mention specific keywords in comments?
+* How often do certain terms appear — across all videos or within a single video?
 
-This project is designed for **research, analysis, and curiosity** — not scraping or automation abuse.  
 All data is fetched via the **YouTube Data API v3**.
 
 ---
 
-## Features
+## Motivation
 
-### Search & Rank Videos
+Most YouTube tools focus on views or subscriber counts. But views don’t tell you:
 
-- Search YouTube across multiple result pages
-- Rank results by:
-  - view count
-  - comment count
-- Filter by:
-  - minimum views
-  - minimum comments
-  - recency (e.g. `30d`)
-- Output results as:
-  - interactive tables (GUI)
-  - JSON for further analysis
+* Is there engagement?
+* Is a video taking positive or negative reception? 
+* Are there certain qualities or issues with the video? 
 
-### Comment Keyword Analysis
+`yt-radar` was built to explore **comment based reception**:
 
-- Fetch real comment text from top-ranked videos
-- Search for **custom keywords** you provide
-- Match:
-  - **any** term
-  - **all** terms
-- Rank videos by keyword activity
-- Display **sample matching comments** for context
-- Show **unique comment counts per term**
-  - A comment counts once per term (even if the word appears multiple times)
-- Toggle a **Term Totals panel** to see keyword distribution per video
-- Control how many sample comments are displayed (display-only limit)
+* Rank by views *or* comments
+* Filter low-signal content (min views, min comments)
+* Analying and comparing comments between videos.
+* Count keyword presence per comment (unique comment counts)
+* Surface sample comments for qualitative insight
 
-#### Term Counting Model
-
-Keyword counts are based on **unique comments**:
-
-- If a keyword appears anywhere in a comment, it counts as 1.
-- Repeating the same word multiple times in a single comment does not increase the count.
-- This prevents spam or repeated phrases from inflating term totals.
-
-### GUI (Primary Interface)
-
-- Tkinter-based desktop GUI
-- Combines search + comment analysis in one view
-- Hover thumbnails, copy-to-clipboard URLs
-- Built for **manual exploration and iteration**
-- Windows `.exe` build supported
-- Toggleable **Term Totals panel**
-- Adjustable number of sample comments shown
-- Hover video thumbnails
-- Double-click to copy URL
-
-### CLI (Shell and testing area)
-- Read for_cli.txt on how to enable.
----
-
-## Requirements
-
-### Runtime
-
-- **Windows** (for the `.exe`)
-- Internet connection
-- A **YouTube Data API v3** key
-
-### Development (if running from source)
-
-- Python **3.10+** (tested on 3.10 and 3.12)
-  - Note: Google has announced Python 3.10 support will end after **Oct 2026**
+The goal is research and exploration. Analyzing reception. 
 
 ---
 
-## Installation
+## Quick Start
 
-### Option A: Windows executable (recommended)
-
-1. Download `yt-radar.exe` from the releases page
-2. Double-click to launch
-3. On first run, you’ll be prompted for your **own YouTube API key**
-
-No Python installation required.
-
----
-
-### Option B: Run from source (development)
-
-#### 1) Clone the repository
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/Avery-Hat/yt-radar.git
 cd yt-radar
 ```
 
-#### 2) Install dependencies
+### 2. Create a virtual environment (recommended)
 
 ```bash
-python -m pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate   # Linux / macOS
+.venv\Scripts\activate      # Windows
 ```
 
----
-
-## API Key Setup
-
-yt-radar uses the **YouTube Data API v3** and requires an API key.
-
-### How it works
-
-* The API key is **never bundled** in the exe
-* Each user provides **their own key**
-* The key is stored locally per-user (not shared, not committed)
-
-### Steps to get a key
-
-1. Create a project in **Google Cloud Console**
-2. Enable **YouTube Data API v3**
-3. Create an **API key**
-
-### Providing the key
-
-#### GUI (recommended)
-
-* On first launch, yt-radar will prompt for a key
-* The key is saved locally and reused on future launches
-
-#### Environment variable (source / CLI use)
+### 3. Install dependencies
 
 ```bash
-export YOUTUBE_API_KEY="YOUR_API_KEY_HERE"
+pip install -r requirements.txt
 ```
+
+### 4. Run the app
+
+```bash
+python main.py
+```
+
+On first launch, you’ll be prompted for a **YouTube Data API key**.
+It will be stored locally for future runs. Location: %APPDATA%/yt-radar/.
 
 ---
 
 ## Usage
 
-### GUI
+### Search & Ranking
 
-Launch the app (exe or source):
+* **Query** – What to search for
+* **Pages / Per Page** – How many results to fetch from YouTube
+* **Top Results (display)** – How many ranked videos to show
+* **Min Views / Min Comments** – Filter low-signal content
+* **Since (e.g. 30d)** – Only include recent uploads
 
-```bash
-yt-radar.exe
-# or
-python main.py
-```
+You can run:
 
-The GUI allows you to:
-
-* run searches
-* analyze comment terms
-* browse results interactively
-* export JSON
+* **Run Query Only** → Search + rank only
+* **Run Full Analysis** → Search + comment keyword analysis
 
 ---
 
-### CLI (optional / advanced)
+### Comment Keyword Analysis
 
-All CLI commands are run via `main.py`, but currently stored as `for_cli.txt`:
+* **Terms** – Comma-separated keywords
+* **Match**:
 
-```bash
-python cli.py <command> [options]
-```
+  * `any` → at least one term must appear
+  * `all` → all terms must appear
+* **Videos to Analyze** – How many top videos to fetch comments from
+* **Comments/video** – Maximum comments to fetch per video
+* **Samples to show** – How many sample matching comments to display
+* **Show term totals** – Displays per-term unique comment counts
 
-#### `search`
+#### Term Totals (Unique Comments)
 
-Search YouTube and rank videos by engagement.
+Each term counts **once per comment**, even if repeated.
 
-```bash
-python cli.py search "path of exile 3.21 builds"
-```
+Example:
 
-Common options:
+> "amazing amazing amazing" → counts as 1 unique comment for "amazing"
 
-```bash
---pages N
---per-page N
---top N
---sort views|comments
---min-views N
---min-comments N
---since 30d
---format table|json
-```
+You can:
 
-#### `comment-terms`
+* Click a row → view term totals for that video
+* Click empty space → reset to global totals
+* Select a row then double click it to copy the youtube link
+---
 
-Search **comment text** for keywords you specify.
+### Export
 
-```bash
-python cli.py comment-terms "path of exile 3.21 builds" --terms "pob,league start"
-```
-
-Options:
-
-```bash
---terms "a,b,c"
---match any|all
---top-videos N
---comments N
-```
+* **Export JSON** saves search + analysis results for further processing.
 
 ---
 
-## Notes on Quota & Performance
+## Contributing
 
-* YouTube API quotas apply
-* `search` is relatively cheap
-* Comment analysis is more expensive:
+Contributions are welcome.
 
-  * cost scales with `top-videos × comments`
-* Start small and increase gradually
+### Areas for improvement
+
+* Performance optimization
+* Better quota usage
+
+### How to contribute
+
+1. Fork the repository
+2. Create a feature branch
+3. Make changes with clear commit messages
+4. Open a pull request describing the improvement
 
 ---
-
-## Project Status
-
-Stable and feature-complete. Minor things may be added in the future.
-
-```
