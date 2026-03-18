@@ -124,11 +124,6 @@ def _find_repo_root() -> Path:
             return p
     return cwd
 
-
-import json
-from pathlib import Path
-import os
-
 def _user_settings_path() -> Path:
     # keep it alongside your config.env, but as json
     if os.name == "nt":

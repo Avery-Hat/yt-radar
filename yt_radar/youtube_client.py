@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Iterable, List, Optional
 
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from yt_radar.models import Video
 
@@ -122,14 +123,16 @@ class YouTubeClient:
                 maxResults=batch,
                 pageToken=page_token,
                 textFormat="plainText",
-                order="relevance",  # maybe time in the futre
+                order="relevance",  # maybe time in the future
             )
 
             try:
                 resp = req.execute()
-            except Exception:
-                # comments disabled, video unavailable, etc.
-                return texts
+            except HttpError as e:
+                if e.resp.status in (403, 404):
+                    # comments disabled or video unavailable
+                    return texts
+                raise
 
             for item in resp.get("items", []):
                 snippet = (
