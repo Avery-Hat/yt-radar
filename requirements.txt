@@ -17,7 +17,6 @@ protobuf==6.33.4
 pyasn1==0.6.2
 pyasn1_modules==0.4.2
 pycparser==3.0
-pygame==2.6.1
 pyinstaller==6.18.0
 pyinstaller-hooks-contrib==2026.0
 pyparsing==3.3.2
