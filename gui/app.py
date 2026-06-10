@@ -4,7 +4,6 @@ import io
 import json
 import re
 import threading
-import sys
 import tkinter as tk
 import urllib.request
 from queue import Queue, Empty
@@ -284,13 +283,6 @@ class YTRadarApp(ctk.CTk):
         self.geometry("1300x900")
         self.minsize(900, 650)
 
-        if sys.platform == "win32":
-            try:
-                from ctypes import windll
-                windll.shcore.SetProcessDpiAwareness(1)
-            except Exception:
-                pass
-
         self._setup_treeview_style()
 
         try:
@@ -340,6 +332,7 @@ class YTRadarApp(ctk.CTk):
         head_fg = "#dce4ee" if is_dark else "#1a1a1a"
 
         style = ttk.Style()
+        style.theme_use("clam")
         style.configure("YTRadar.Treeview",
                         background=bg, foreground=fg, fieldbackground=bg,
                         rowheight=24, borderwidth=0)
@@ -354,6 +347,10 @@ class YTRadarApp(ctk.CTk):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
+        self._status_label = ctk.CTkLabel(self, text="Ready", anchor="w",
+                                           font=ctk.CTkFont(size=12))
+        self._status_label.pack(side="bottom", fill="x", padx=12, pady=(2, 6))
+
         content = ctk.CTkFrame(self, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=10, pady=6)
 
@@ -401,11 +398,6 @@ class YTRadarApp(ctk.CTk):
         self.sample_box.insert("1.0", "Select a row to view sample matching comments (when available).\n")
         self.sample_box.configure(state="disabled")
         self.sample_box.pack(fill="x", pady=(0, 6))
-
-        # Status bar
-        self._status_label = ctk.CTkLabel(self, text="Ready", anchor="w",
-                                           font=ctk.CTkFont(size=12))
-        self._status_label.pack(side="bottom", fill="x", padx=12, pady=(2, 6))
 
         self._configure_results_stable()
 
