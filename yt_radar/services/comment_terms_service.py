@@ -49,6 +49,7 @@ class CommentTermsService:
         videos: Iterable[Video],
         terms: TermQuery,
         comments_per_video: int,
+        max_samples: int = 10,  # max sample tab
     ) -> tuple[List[CommentTermsResult], dict[str, int]]:
         """
         Term-match comments for a provided set of Video objects (no searching, no refetching).
@@ -75,8 +76,7 @@ class CommentTermsService:
                         per_video_totals[original] += 1
                         term_totals[original] += 1
 
-
-            total_hits, matched_count, samples = self._matcher.match(comments, terms)
+            total_hits, matched_count, samples = self._matcher.match(comments, terms, max_samples=max_samples)
 
             if matched_count > 0:
                 results.append(

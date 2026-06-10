@@ -31,7 +31,7 @@ jobs:
       - name: Build EXE
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --onefile --windowed --name yt-radar main.py
+          pyinstaller --noconfirm yt-radar.spec
 
       - name: Debug dist contents
         shell: pwsh

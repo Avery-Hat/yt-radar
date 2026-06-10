@@ -8,7 +8,7 @@ class TermQuery:
     mode: str = "any"  # any | all
 
 class TermMatcher:
-    def match(self, comments: Iterable[str], tq: TermQuery) -> tuple[int, int, List[str]]:
+    def match(self, comments: Iterable[str], tq: TermQuery, max_samples: int = 10) -> tuple[int, int, List[str]]:
         """
         Returns: (total_term_hits, matched_comment_count, sample_comments)
         total_term_hits counts term occurrences across matched comments.
@@ -36,7 +36,7 @@ class TermMatcher:
             if ok:
                 matched_comments += 1
                 total_hits += hits
-                if len(samples) < 3:  # keep v0 simple
+                if len(samples) < max_samples:  # added modification for sample size
                     samples.append(c)
 
         return (total_hits, matched_comments, samples)
