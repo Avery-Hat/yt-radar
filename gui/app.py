@@ -281,7 +281,7 @@ class YTRadarApp(ctk.CTk):
         super().__init__()
         self.title("yt-radar")
         self.geometry("1300x900")
-        self.minsize(900, 650)
+        self.resizable(False, False)
 
         self._setup_treeview_style()
 
